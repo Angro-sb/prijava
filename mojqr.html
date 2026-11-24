@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="hr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<meta name="theme-color" content="#ffffff">
+<title>Moj QR</title>
+<!-- MOJ QR (24.11.2026.): QR na mobitelu radnice, mijenja se svakih 30 s.
+     Poveznica: mojqr.html#s=<tajna>&d=<šifra>&i=<ime>&f=<firma>  (iza # – ne ide na poslužitelj)
+     Kod = prva 4 bajta HMAC-SHA256(tajna, broj 30-s razdoblja) mod 10^8 – ISTO kao mojQrKod_ u Code.gs. -->
+<script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.min.js"></script>
+<style>
+  * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  html,body { margin:0; height:100%; background:#fff; color:#111; font-family:Roboto, Arial, sans-serif; user-select:none; }
+  .app { display:flex; flex-direction:column; align-items:center; justify-content:center; min-height:100%; padding:16px; gap:10px; text-align:center; }
+  .firma { font-size:16px; color:#555; font-weight:600; letter-spacing:.5px; }
+  .ime { font-size:26px; font-weight:800; }
+  .qr { width:min(86vw, 62vh); height:min(86vw, 62vh); display:flex; align-items:center; justify-content:center; }
+  .qr svg { width:100%; height:100%; }
+  .traka { width:min(86vw, 62vh); height:8px; background:#e5e7eb; border-radius:4px; overflow:hidden; }
+  .traka div { height:100%; background:#1f9d55; transition:width 1s linear; }
+  .uputa { font-size:15px; color:#444; }
+  .greska { font-size:18px; color:#c53030; padding:20px; }
+  .sat { font-size:14px; color:#888; font-variant-numeric:tabular-nums; }
+</style>
+</head>
+<body>
+<div class="app" id="app">
+  <div class="firma" id="firma"></div>
+  <div class="ime" id="ime"></div>
+  <div class="qr" id="qr"></div>
+  <div class="traka"><div id="traka" style="width:100%"></div></div>
+  <div class="uputa">Pokažite ovaj kod kameri terminala na ulazu.<br>Kod se mijenja svakih 30 sekundi.</div>
+  <div class="sat" id="sat"></div>
+</div>
+<script>
+var KORAK = 30000;
+function citajPostavke() {
+  var h = new URLSearchParams(location.hash.replace(/^#/, ''));
+  if (h.get('s') && h.get('d')) {
+    var p = { s: h.get('s'), d: h.get('d'), i: h.get('i') || '', f: h.get('f') || '' };
+    try { localStorage.setItem('mojqr', JSON.stringify(p)); } catch (e) {}
+    return p;
+  }
+  try { return JSON.parse(localStorage.getItem('mojqr') || 'null'); } catch (e) { return null; }
+}
+var P = citajPostavke();
+
+function greska(t) { document.getElementById('app').innerHTML = '<div class="greska">' + t + '</div>'; }
+
+if (!P) {
+  greska('Ova stranica nije postavljena.<br>Skenirajte instalacijski QR kod s lista koji ste dobili u uredu.');
+} else if (!window.crypto || !crypto.subtle) {
+  greska('Ovaj preglednik ne podržava Moj QR. Otvorite stranicu u Chromeu.');
+} else {
+  document.title = 'Moj QR – ' + (P.f || '');
+  document.getElementById('firma').textContent = P.f;
+  document.getElementById('ime').textContent = P.i;
+  var enc = new TextEncoder(), kljucP = crypto.subtle.importKey('raw', enc.encode(P.s), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+  var zadnje = -1;
+
+  function kod(w) {
+    return kljucP.then(function (k) { return crypto.subtle.sign('HMAC', k, enc.encode(String(w))); }).then(function (sig) {
+      var b = new Uint8Array(sig);
+      var v = ((b[0] * 16777216) + (b[1] << 16) + (b[2] << 8) + b[3]) % 100000000;
+      return ('00000000' + v).slice(-8);
+    });
+  }
+
+  function crtaj() {
+    var sad = Date.now(), w = Math.floor(sad / KORAK);
+    var ostalo = KORAK - (sad % KORAK);
+    document.getElementById('traka').style.width = (ostalo / KORAK * 100) + '%';
+    var d = new Date(sad);
+    document.getElementById('sat').textContent = ('0' + d.getHours()).slice(-2) + ':' + ('0' + d.getMinutes()).slice(-2) + ':' + ('0' + d.getSeconds()).slice(-2);
+    if (w === zadnje) return;
+    zadnje = w;
+    kod(w).then(function (k) {
+      var q = qrcode(0, 'M');
+      q.addData('D-' + P.d + '-' + k);
+      q.make();
+      document.getElementById('qr').innerHTML = q.createSvgTag({ cellSize: 8, margin: 3, scalable: true });
+    });
+  }
+  crtaj();
+  setInterval(crtaj, 1000);
+  document.addEventListener('visibilitychange', function () { if (document.visibilityState === 'visible') { zadnje = -1; crtaj(); } });
+
+  if (navigator.wakeLock) {
+    var budan = function () { navigator.wakeLock.request('screen').catch(function () {}); };
+    budan();
+    document.addEventListener('visibilitychange', function () { if (document.visibilityState === 'visible') budan(); });
+  }
+}
+</script>
+</body>
+</html>
